@@ -1,3 +1,16 @@
+###############################################################################
+# Description      : Script de Restauration des données (pour changement de poste)
+#                    
+
+# Lancement en admin uniquement
+# *****************************************************************************
+
+
+#Récupération Nom du pc 
+# *****************************************************************************
+$netbios = $env:computername | Select-Object
+# *****************************************************************************
+
 
 # Choix chemin sauvegarde
 # *****************************************************************************
@@ -24,38 +37,9 @@ If ($Choix -like 1) {
 
     $CheminSauveUser = $CheminSauve + "\Utilisateurs\"
 
-    #Fichier des exclusions
-    $exclude_savefilepath = ($CheminSauve.ToLower().Replace("\complete","")+"\exclude.rcj")
-    if (!(Test-Path ($exclude_savefilepath))) {
-            Write-Host "Exclude.rcj n'existe pas. Voulez-vous restaurer y compris les fichiers effacés ? y/n" -ForegroundColor Red
-            $RestauFULL = read-host
-            Switch -exact  ($RestauFULL) {
-            "y" {new-item -Path $exclude_savefilepath}
-            "n" {Write-Host "Refaire une sauvegarde complète (StartONF v3.0.5 mini)" -ForegroundColor Red
-                Start-Sleep 10
-                exit
-            }
-            default {Write-Host "Choix inconnu" -ForegroundColor Red
-                Start-Sleep 10
-                exit}
-            }
+  
     }
     
-    <#
-    #Remplace les éventuelles IP de exclude.rcj par le nom du serveur
-    $Serveur = $CheminSauve.replace('\\','').Substring(0,$CheminSauve.replace('\\','').IndexOf('\'))
-    $IpServeur = (Test-NetConnection $Serveur).RemoteAddress.IPAddressToString
-    (Get-Content $exclude_filepath) | Foreach-Object {$_ -replace $IpServeur, $Serveur} | Set-Content $exclude_filepath
-    #>
-
-    #exclude.rcj remplace la chaine unique du chemin par la source de la sauvegarde
-
-    $exclude_filepath = "c:\admintools\log\restauration\exclude.rcj"
-    if (!(Test-Path $exclude_filepath)) {New-Item -path $exclude_filepath -ItemType file}
-   
-    Get-Content $exclude_savefilepath | Foreach-Object {$_ -replace 'ChaineTempoCheminDestination', $CheminSauve} | Set-Content $exclude_filepath
-    
-
     #Incrementielle
     Write-Host "Voulez-vous y appliquer les incrémentielles postérieures à la complète ?" -ForegroundColor Green
     $ChoixIncrémentielles = read-host "Y/N"
@@ -81,10 +65,6 @@ If ($Choix -like 2) {
     $CheminSauveUser = $DriveSauve+":\Users\"
     $CheminSauve = $DriveSauve+":\Donnees\"
 
-    #Fichier des exclusions (vide)
-    $exclude_filepath = "C:\Temp\exclude.rcj"
-    new-item -Path $exclude_filepath
-
     $AppDataSignature = "\AppData\Roaming\Microsoft\Signatures"
     $AppDataMozilla = "\AppData\Roaming\Mozilla"
     $AppDataOutlook = "\AppData\Roaming\Microsoft\Outlook"
@@ -95,3 +75,199 @@ If ($Choix -like 2) {
     $AppDataSpelling = "\AppData\Roaming\Microsoft\Spelling"
 
 }
+
+
+#Profil utilisateur à restaurer
+# *****************************************************************************
+$Admininfo = (Get-IniFile "C:\Admintools\Params\admininfo.ini").info
+$LDAP = $Admininfo.uid
+
+$LDAPuserList = New-Object System.Collections.ArrayList
+#foreach($name in (get-childitem "C:\Temp\test").Name){ #liste des profils présents dans la sauvegarde
+foreach($name in (get-childitem $CheminSauveUser).Name){ #liste des profils présents dans la sauvegarde
+    $LDAPuserList.add($name)
+}
+foreach($name in (get-childitem $CheminSauveUser -Hidden).Name){ #liste des profils présents dans la sauvegarde
+    $LDAPuserList.add($name)
+}
+
+
+Write-Host "Poste attribué à : "-NoNewline
+Write-Host "$LDAP" -ForegroundColor Green
+
+
+$rep = read-host "Voulez-vous restaurer le profil présélectionné $LDAP (Y/N) ?"
+if(($LDAPuserList|where {$_ -like "*$LDAP*"}).count -gt 1){
+    Write-Host "!!!! Il y a plusieurs profils au nom de l'utilisateur $LDAP!!!!"
+    Write-Host "Choisissez le bon profil..."
+    $rep = "N" #comme ça ci-dessous on affichera la liste des profils
+}
+elseif(($LDAPuserList|where {$_ -like "*$LDAP*"}).count -Lt 1){
+    Write-Host "!!!! Le profil au nom de l'utilisateur $LDAP n'existe pas dans la sauvegarde !!!!" -ForegroundColor Red
+    Write-Host "Vérifiez la sauvegarde ou choissisez un autre profil !"
+    $rep = "N" #comme ça ci-dessous on affichera la liste des profils
+}
+
+if($rep -like "N"){
+    $number = 1
+    foreach ($choixldap in $LDAPuserList) {
+        Write-Host $number "-" $choixldap
+        $number++
+    }
+    $LDAPuserChoix = read-host "Quel est le numéro du Profil à restaurer ?"
+    $LDAPsauve = $LDAPuserList.item($LDAPuserChoix-1)
+
+    $CheminSauveUser = $CheminSauveUser + $LDAPsauve
+
+    $LDAPsauve = ($LDAPsauve.Split("."))[0]
+
+    foreach($name in (get-childitem "C:\Users").Name){ #liste des profils présents sur le pc
+        If ($name -like ($LDAPsauve.Split("."))[0]){
+            $CheminRestauUser = "C:\Users\" + $LDAPsauve
+            $ProfilExiste = "y"
+        }
+        ElseIf (!($ProfilExiste -like "y")) {
+            $CheminRestauUser = "C:\Donnees\Utilisateurs\" + $LDAPsauve + "_restauration"
+            $ProfilExiste = "n"
+        }
+    }
+
+    Write-Host "Copie du profil dans : " -NoNewline
+    Write-Host $CheminRestauUser  -ForegroundColor Green
+    Start-Sleep 4
+
+}
+elseif($rep -like "Y"){
+
+    if (Test-Path ("C:\Users\" + $LDAP)) {
+        $CheminRestauUser = "C:\Users\" + $LDAP
+    }
+    Else {
+        $CheminRestauUser = "C:\Donnees\Utilisateurs\" + $LDAP + "_restauration"
+    }
+    $CheminSauveUser = $CheminSauveUser + $LDAP
+    $LDAPsauve = $LDAP
+}
+
+#******************************************************************************
+#E-mail de Fin
+# *****************************************************************************
+$ChoixMail = read-host "Voulez-vous recevoir un mail de fin de copie  ? (Y/N)"
+If ($ChoixMail -like "y"){
+
+    $MailsList = New-Object System.Collections.ArrayList
+    $MailsList = "NOMSSR1","NOMSSR2", "NOMSSR3", "NOMSSR3", "NOMSSR4"
+
+    $numberMail = 0
+    foreach ($MailList in $MailsList) {
+        Write-Host $numberMail "-" $MailsList[$numberMail]
+        $numberMail++
+    }
+    $ChoixMaildest = read-host "Vers quel mail ?"
+    $ChoixMaildest = $MailsList.item($ChoixMaildest)
+}
+
+# *****************************************************************************
+
+#Copies
+# *****************************************************************************
+#signatures
+    robocopy.exe $CheminSauveUser$AppDataSignature $CheminRestauUser"\AppData\Roaming\Microsoft\Signatures" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Signatures.log
+#Mozilla
+    robocopy.exe $CheminSauveUser$AppDataMozilla $CheminRestauUser"\AppData\Roaming\Mozilla" /XD cache2 saved-telemetry-pings /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Firefox.log
+#Outlook
+    robocopy.exe $CheminSauveUser$AppDataOutlook $CheminRestauUser"\AppData\Roaming\Microsoft\Outlook" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Outlook.log
+#C\donnees
+    robocopy.exe $CheminSauve C:\Donnees /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\donnees.log /XF Rapport_de_Sauvegarde_Complet.log Rapport_de_Sauvegarde_Synthetique.log  /XD Utilisateurs #odyssee commun
+#Forms
+    robocopy.exe $CheminSauveUser$AppDataForms $CheminRestauUser"\AppData\Local\Microsoft\FORMS" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Local_Microsoft_Forms.log
+#Templates
+    robocopy.exe $CheminSauveUser$AppDataTemplates $CheminRestauUser"\AppData\Roaming\Microsoft\Templates" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Templates.log
+#UProof
+    robocopy.exe $CheminSauveUser$AppDataUProof $CheminRestauUser"\AppData\Roaming\Microsoft\UProof" /e /r:5 /w:10 /TEE  /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_UProof.log
+#GoogleEarth
+If (Test-Path ($CheminSauveUser+$AppDataGoogleEarth)) {
+    robocopy.exe $CheminSauveUser$AppDataGoogleEarth $CheminRestauUser"\AppData\localLow\Google\GoogleEarth" /e /r:5 /w:10 /TEE  /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_LocalLow_Google_GoogleEarth.log    
+}
+#Spelling
+If (Test-Path ($CheminSauveUser+$AppDataSpelling)) {
+    robocopy.exe $CheminSauveUser$AppDataSpelling $CheminRestauUser"\AppData\Roaming\Microsoft\Spelling" /e /r:5 /w:10 /TEE  /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Spelling.log
+}
+
+#Bureau
+    robocopy.exe $CheminSauveUser"\Desktop" $CheminRestauUser"\Desktop" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Desktop.log
+#Documents
+    robocopy.exe $CheminSauveUser"\Documents" $CheminRestauUser"\Documents" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Documents.log
+#Downloads
+    robocopy.exe $CheminSauveUser"\Downloads" $CheminRestauUser"\Downloads" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Downloads.log
+#Favorites
+    robocopy.exe $CheminSauveUser"\Favorites" $CheminRestauUser"\Favorites" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Favorites.log
+#Pictures
+    robocopy.exe $CheminSauveUser"\Pictures" $CheminRestauUser"\Pictures" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Pictures.log
+#Music
+    robocopy.exe $CheminSauveUser"\Music" $CheminRestauUser"\Music" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Music.log
+#Videos
+    robocopy.exe $CheminSauveUser"\Videos" $CheminRestauUser"\Videos" /e /r:5 /w:10 /TEE /JOB:$exclude_filepath /unilog:c:\admintools\Log\restauration\Videos.log
+    
+
+If ($ChoixIncrémentielles -like "Y") {
+
+    $CheminIncrementielles = $CheminSauve.ToLower().Replace('\complete', '\incrementielles')
+    $CheminIni = $CheminSauve.ToLower().Replace('\complete', '\donnees_incrementielle.ini')
+    $DateComplete = Get-Date ((Get-IniFile -Chemin $CheminIni).OPTIONS.DateComplete)
+
+    $Incrementielles = Get-ChildItem -Path $CheminIncrementielles | ? {$DateComplete - (Get-Date($_.name)) -le 0 }
+     
+    Foreach ($Incrementielle in $Incrementielles) {
+        
+        $CheminIncrementielle = $CheminIncrementielles + "\" + $Incrementielle.name
+
+        #C\donnees
+        robocopy.exe $CheminIncrementielle C:\Donnees /e /r:5 /w:10 /TEE /XF Rapport_de_Sauvegarde_Complet.log Rapport_de_Sauvegarde_Synthetique.log  /XD Utilisateurs /unilog+:c:\admintools\Log\restauration\donnees.log #odyssee commun
+
+        $CheminSauveUser = $CheminIncrementielle + "\Utilisateurs\" + $LDAPsauve
+
+        #signatures
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Microsoft\Signatures" $CheminRestauUser"\AppData\Roaming\Microsoft\Signatures" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Signatures.log
+        #firefox
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Mozilla" $CheminRestauUser"\AppData\Roaming\Mozilla" /XD cache2 saved-telemetry-pings /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Mozilla.log
+        #Forms
+            robocopy.exe $CheminSauveUser"\AppData\Local\Microsoft\FORMS" $CheminRestauUser"\AppData\Local\Microsoft\FORMS" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Local_Microsoft_Forms.log
+        #Outlook
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Microsoft\Outlook" $CheminRestauUser"\AppData\Roaming\Microsoft\Outlook" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Outlook.log
+        #Templates
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Microsoft\Templates" $CheminRestauUser"\AppData\Roaming\Microsoft\Templates" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Templates.log
+        #UProof
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Microsoft\UProof" $CheminRestauUser"\AppData\Roaming\Microsoft\UProof" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_UProof.log
+        #GoogleEarth
+        If (Test-Path ($CheminSauveUser+"\AppData_localLow_Google_GoogleEarth")) {
+            robocopy.exe $CheminSauveUser"\AppData\localLow\Google\GoogleEarth" $CheminRestauUser"\AppData\localLow\Google\GoogleEarth" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_LocalLow_Google_GoogleEarth.log    
+        }
+        #Spelling
+        If (Test-Path ($CheminSauveUser+"\AppData_Roaming_Microsoft_Spelling")) {
+            robocopy.exe $CheminSauveUser"\AppData\Roaming\Microsoft\Spelling" $CheminRestauUser"\AppData\Roaming\Microsoft\Spelling" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\AppData_Roaming_Microsoft_Spelling.log
+        }
+        #Bureau
+            robocopy.exe $CheminSauveUser"\Desktop" $CheminRestauUser"\Desktop" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Desktop.log
+        #Documents
+            robocopy.exe $CheminSauveUser"\Documents" $CheminRestauUser"\Documents" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Documents.log
+        #Downloads
+            robocopy.exe $CheminSauveUser"\Downloads" $CheminRestauUser"\Downloads" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Downloads.log
+        #Favorites
+            robocopy.exe $CheminSauveUser"\Favorites" $CheminRestauUser"\Favorites" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Favorites.log
+        #Pictures
+            robocopy.exe $CheminSauveUser"\Pictures" $CheminRestauUser"\Pictures" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Pictures.log
+        #Music
+            robocopy.exe $CheminSauveUser"\Music" $CheminRestauUser"\Music" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Music.log
+        #Videos
+            robocopy.exe $CheminSauveUser"\Videos" $CheminRestauUser"\Videos" /e /r:5 /w:10 /TEE /unilog+:c:\admintools\Log\restauration\Videos.log
+    }
+}
+
+# Vérification des Logs
+# *****************************************************************************
+check_log
+
+# Fin
+# *****************************************************************************
+pause
